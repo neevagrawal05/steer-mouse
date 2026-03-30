@@ -1,0 +1,22 @@
+{
+  "scroll": {
+    "reverse": true,
+    "speed": 1.0
+  },
+  "chords": [
+    { "buttons": [0, 1], "action": { "type": "playPause" } },
+    { "buttons": [0, 3], "action": { "type": "keystroke", "keyCode": 13, "modifiers": ["command"] } },
+    { "buttons": [3, 4], "action": { "type": "missionControl" } },
+    { "buttons": [0, 2], "action": { "type": "none" } },
+    { "buttons": [0, 4], "action": { "type": "none" } },
+    { "buttons": [1, 2], "action": { "type": "none" } },
+    { "buttons": [1, 3], "action": { "type": "none" } },
+    { "buttons": [1, 4], "action": { "type": "none" } },
+    { "buttons": [2, 3], "action": { "type": "none" } },
+    { "buttons": [2, 4], "action": { "type": "none" } }
+  ],
+  "buttons": [
+    { "button": 3, "action": { "type": "keystroke", "keyCode": 123, "modifiers": ["control"] } },
+    { "button": 4, "action": { "type": "keystroke", "keyCode": 124, "modifiers": ["control"] } }
+  ]
+}
