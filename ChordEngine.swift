@@ -11,7 +11,7 @@ final class ChordEngine {
     private var pendingTimers:   [Int: DispatchWorkItem] = [:]
     private var pressTimestamps: [Int: Date] = [:]
 
-    private let maxHoldTime: TimeInterval = 0.4
+    private let maxHoldTime: TimeInterval = 3.0  // 3 seconds - enough time for chord detection
     private let chordWindow: Double       = 0.020
 
     // Scroll settings
@@ -61,7 +61,13 @@ final class ChordEngine {
                     print("[CHORD] ✅ \(pair) → \(action.type.rawValue)")
                     perform(action)
                     if btn == 0 || btn == 1 { cancelClick(btn: btn) }
-                    resetState()
+                    // Mark both buttons as consumed to suppress their individual actions on release
+                    consumedButtons.insert(btn)
+                    consumedButtons.insert(partner)
+                    // Clear held buttons but keep consumedButtons for release event suppression
+                    for heldBtn in heldButtons { cancelTimer(for: heldBtn) }
+                    heldButtons.removeAll()
+                    pressTimestamps.removeAll()
                     return nil
                 }
             }
@@ -83,15 +89,17 @@ final class ChordEngine {
 
         } else {
             pressTimestamps.removeValue(forKey: btn)
-            guard heldButtons.contains(btn) else { return event }
-            heldButtons.remove(btn)
-            cancelTimer(for: btn)
-
+            
+            // Check if this button was consumed by a chord BEFORE checking heldButtons
             if consumedButtons.contains(btn) {
                 consumedButtons.remove(btn)
                 print("[SUPR ] Button \(btn) suppressed")
                 return nil
             }
+            
+            guard heldButtons.contains(btn) else { return event }
+            heldButtons.remove(btn)
+            cancelTimer(for: btn)
 
             if let action = buttonMap[btn] {
                 print("[FIRE ] Button \(btn) → \(action.type.rawValue)")
@@ -114,25 +122,31 @@ final class ChordEngine {
 
         print("[SCROLL] reverse=\(scrollReverse) mul=\(mul)")
 
-        // 1. Integer deltas — most apps read these
+        // Read current deltas
         let i1 = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
         let i2 = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
-        event.setIntegerValueField(.scrollWheelEventDeltaAxis1,
-                                   value: Int64((Double(i1) * mul).rounded()))
-        event.setIntegerValueField(.scrollWheelEventDeltaAxis2,
-                                   value: Int64((Double(i2) * mul).rounded()))
-
-        // 2. Fixed-point deltas — used by modern apps for smooth scroll
         let f1 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
         let f2 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
-        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: f1 * mul)
-        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: f2 * mul)
-
-        // 3. Point deltas — pixel-level, used by trackpad-aware apps
         let p1 = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
         let p2 = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
-        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: p1 * mul)
-        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: p2 * mul)
+
+        let newI1 = Int64((Double(i1) * mul).rounded())
+        let newI2 = Int64((Double(i2) * mul).rounded())
+        let newF1 = f1 * mul
+        let newF2 = f2 * mul
+        let newP1 = p1 * mul
+        let newP2 = p2 * mul
+
+        print("[SCROLL] [axis1] int: \(i1) → \(newI1) | fixed: \(f1) → \(newF1) | point: \(p1) → \(newP1)")
+        print("[SCROLL] [axis2] int: \(i2) → \(newI2) | fixed: \(f2) → \(newF2) | point: \(p2) → \(newP2)")
+
+        // Try modifying the original event
+        event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: newI1)
+        event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: newI2)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: newF1)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: newF2)
+        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: newP1)
+        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: newP2)
 
         return event
     }
@@ -142,12 +156,18 @@ final class ChordEngine {
     private func clearGhostButtons() {
         let now = Date()
         var ghosts: [Int] = []
-        for btn in heldButtons {
-            guard let t = pressTimestamps[btn] else { ghosts.append(btn); continue }
-            if now.timeIntervalSince(t) > maxHoldTime { ghosts.append(btn) }
+        
+        // Only clear isolated buttons (no chord in progress)
+        // If multiple buttons are held, skip ghost detection (chord attempt in progress)
+        if heldButtons.count <= 1 {
+            for btn in heldButtons {
+                guard let t = pressTimestamps[btn] else { ghosts.append(btn); continue }
+                if now.timeIntervalSince(t) > maxHoldTime { ghosts.append(btn) }
+            }
         }
+        
         for btn in ghosts {
-            print("[GHOST] ⚠️  Button \(btn) stuck — clearing")
+            print("[GHOST] ⚠️  Button \(btn) stuck (held > 3s alone) — clearing")
             heldButtons.remove(btn)
             consumedButtons.remove(btn)
             pressTimestamps.removeValue(forKey: btn)
