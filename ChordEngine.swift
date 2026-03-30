@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
+import IOKit
 
 final class ChordEngine {
 
@@ -77,13 +78,8 @@ final class ChordEngine {
 
             if btn == 0 || btn == 1 { return event }
 
-            if heldButtons.count == 1, let action = buttonMap[btn] {
-                print("[FAST ] Button \(btn) → \(action.type.rawValue) (instant)")
-                consumedButtons.insert(btn)
-                perform(action)
-                return nil
-            }
-
+            // Don't fire immediately — wait for release to fire the button action
+            // This way we can detect chords if another button is pressed
             startTimer(for: btn)
             return nil
 
@@ -237,7 +233,7 @@ final class ChordEngine {
         case .expose:
             runAppleScript("tell application \"System Events\" to key code 101 using {control down}")
         case .playPause:
-            sendMediaKey(keyType: 16)
+            sendMediaKeyViaAppleScript()
         case .back:
             sendKey(keyCode: 33, modifiers: .maskCommand)
         case .forward:
@@ -280,19 +276,49 @@ final class ChordEngine {
         up?.post(tap: .cghidEventTap)
     }
 
+    private func sendMediaKeyViaAppleScript() {
+        print("[MEDIA] Sending play/pause via native media key (original method)")
+        sendMediaKey(keyType: 16)
+    }
+
     private func sendMediaKey(keyType: Int) {
         print("[MEDIA] Sending media key \(keyType)")
         let flags = 0xa00
-        func post(data1: Int) {
-            let e = NSEvent.otherEvent(
-                with: .systemDefined, location: .zero,
-                modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
-                timestamp: 0, windowNumber: 0, context: nil,
-                subtype: 8, data1: data1, data2: -1)
-            e?.cgEvent?.post(tap: .cgAnnotatedSessionEventTap)
-        }
-        post(data1: (keyType << 16) | (0xa << 8))
-        post(data1: (keyType << 16) | (0xb << 8))
+        
+        // Press (data2 = 0xa)
+        let downData1 = (keyType << 16) | (0xa << 8)
+        let downEvent = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: downData1,
+            data2: -1
+        )
+        print("[MEDIA] Posting down event: data1=\(String(format: "0x%x", downData1))")
+        downEvent?.cgEvent?.post(tap: .cgSessionEventTap)
+        
+        usleep(10000) // 10ms delay
+        
+        // Release (data2 = 0xb)
+        let upData1 = (keyType << 16) | (0xb << 8)
+        let upEvent = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: upData1,
+            data2: -1
+        )
+        print("[MEDIA] Posting up event: data1=\(String(format: "0x%x", upData1))")
+        upEvent?.cgEvent?.post(tap: .cgSessionEventTap)
+        print("[MEDIA] ✅ Media key sent")
     }
 
     private func runShell(_ cmd: String) {
