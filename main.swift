@@ -17,7 +17,7 @@ if !AXIsProcessTrustedWithOptions(opts) {
     """)
 }
 
-// ── 3. Install CGEventTap — buttons + scroll ────────────────────────────────
+// ── 3. Install CGEventTap — buttons only ────────────────────────────────
 
 let mask: CGEventMask =
     (1 << CGEventType.leftMouseDown.rawValue)  |
@@ -25,8 +25,7 @@ let mask: CGEventMask =
     (1 << CGEventType.rightMouseDown.rawValue) |
     (1 << CGEventType.rightMouseUp.rawValue)   |
     (1 << CGEventType.otherMouseDown.rawValue) |
-    (1 << CGEventType.otherMouseUp.rawValue)   |
-    (1 << CGEventType.scrollWheel.rawValue)    // ← scroll added
+    (1 << CGEventType.otherMouseUp.rawValue)
 
 let enginePtr = Unmanaged.passRetained(engine).toOpaque()
 
@@ -55,12 +54,7 @@ let runLoopSrc = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSrc, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 
-// Log scroll settings
-let scrollCfg = config.scroll
-let reversed  = scrollCfg?.reverse ?? false
-let speed     = scrollCfg?.speed   ?? 1.0
-print("[ChordDaemon] ✅  Running — buttons + scroll active.")
-print("[ChordDaemon]     Scroll reverse: \(reversed)  speed: \(speed)x")
+print("[ChordDaemon] ✅  Running — listening for button chords.")
 print("[ChordDaemon]     Press Ctrl+C to stop.")
 
 // ── 4. Run ──────────────────────────────────────────────────────────────────
