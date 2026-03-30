@@ -7,6 +7,8 @@ enum ActionType: String, Codable {
     case launchpad
     case expose
     case playPause
+    case previousTrack
+    case nextTrack
     case keystroke
     case none
 }
@@ -27,16 +29,15 @@ struct ButtonMapping: Codable {
     var action: Action
 }
 
-// NEW: Scroll settings block in config.json
 struct ScrollSettings: Codable {
-    var reverse: Bool?      // true = reverse scroll direction
-    var speed:   Double?    // 1.0 = normal, 2.0 = 2x faster, 0.5 = slower
+    var reverse: Bool?      
+    var speed:   Double?    
 }
 
 struct ChordConfig: Codable {
     var chords:  [ChordMapping]
     var buttons: [ButtonMapping]
-    var scroll:  ScrollSettings?   // optional — defaults to normal if missing
+    var scroll:  ScrollSettings?   
 }
 
 struct ConfigLoader {
@@ -44,7 +45,8 @@ struct ConfigLoader {
     static func load() -> ChordConfig {
         let locations: [URL] = [
             executableDir().appendingPathComponent("config.json"),
-            homeDir().appendingPathComponent(".config/chorddaemon/config.json")
+            homeDir().appendingPathComponent(".config/chorddaemon/config.json"),
+            homeDir().appendingPathComponent(".chorddaemon/config.json")
         ]
         for url in locations {
             guard let data = try? Data(contentsOf: url) else { continue }

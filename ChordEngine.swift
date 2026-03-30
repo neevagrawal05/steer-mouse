@@ -25,8 +25,9 @@ final class ChordEngine {
     private let scrollReverse: Bool
     private let scrollSpeed: Double
     
-    // 🎛️ Volume Modifier Buttons (Works for Button 3 and Button 4)
-    private let volumeScrollButtons: Set<Int> = [3, 4] 
+    // 🎛️ Volume Modifier explicitly set to Button 4
+    private let volumeScrollButtons: Set<Int> = [4] 
+    private var accumulatedScroll: Double = 0.0
 
     init(config: ChordConfig) {
         self.scrollReverse = config.scroll?.reverse ?? false
@@ -90,16 +91,16 @@ final class ChordEngine {
 
             if btn == 0 || btn == 1 { return event }
             
-            // 🛑 If this is a volume modifier, swallow the click and wait for scroll or release.
-            // Do NOT start the fast-fire timer.
-            if volumeScrollButtons.contains(btn) { return nil }
+            if volumeScrollButtons.contains(btn) { 
+                accumulatedScroll = 0.0 
+                return nil 
+            }
             
             startTimer(for: btn)
             return nil
 
         } else {
             pressTimestamps.removeValue(forKey: btn)
-            
             heldButtons.remove(btn)
             cancelTimer(for: btn)
             
@@ -112,8 +113,6 @@ final class ChordEngine {
                 perform(action)
                 return nil
             } else if volumeScrollButtons.contains(btn) {
-                // If they used the button but didn't scroll, and it has no action mapped,
-                // synthesize the native click on release so the OS doesn't lose the button.
                 synthesizeClick(btn: btn)
                 return nil
             }
@@ -124,7 +123,7 @@ final class ChordEngine {
 
     private func handleScroll(_ event: CGEvent) -> CGEvent? {
         
-        // ── 1. Volume Control via Scroll ───────────────────────────────
+        // ── Volume Control via Button 4 + Scroll ───────────────────────
         let activeVolModifiers = heldButtons.intersection(volumeScrollButtons)
         
         if !activeVolModifiers.isEmpty {
@@ -133,31 +132,31 @@ final class ChordEngine {
                 cancelTimer(for: btn)
             }
             
-            // Mouse wheel Y-axis delta (1 tick = 1 step)
-            let deltaY = Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
+            let rawDelta = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+            accumulatedScroll += rawDelta
             
-            if deltaY > 0 {
-                sendMediaKey(keyType: 0) // Sound Up
-            } else if deltaY < 0 {
+            if accumulatedScroll >= 1.0 {
                 sendMediaKey(keyType: 1) // Sound Down
+                accumulatedScroll = 0.0
+            } else if accumulatedScroll <= -1.0 {
+                sendMediaKey(keyType: 0) // Sound Up
+                accumulatedScroll = 0.0
             }
             
-            return nil // Consume scroll event so the browser doesn't scroll
+            return nil // Consume scroll event so the page doesn't scroll
         }
         // ────────────────────────────────────────────────────────────────
 
-        let momentumPhase = Int(event.getIntegerValueField(.scrollWheelEventMomentumPhase))
-        if momentumPhase != 0 { return event }
-        
-        let i1 = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
-        let i2 = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
-        guard i1 != 0 || i2 != 0 else { return event }
-        
+        // If no modifier is held, check if we need to apply config math
         let flip: Double = scrollReverse ? -1.0 : 1.0
         let mul:  Double = scrollSpeed * flip
 
+        // If math isn't changing anything, instantly return the raw event to preserve native trackpad momentum
         guard mul != 1.0 else { return event }
 
+        // Only tamper with the scroll if config explicitly asks for it
+        let i1 = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
+        let i2 = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
         let f1 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
         let f2 = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
         let p1 = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
@@ -180,8 +179,6 @@ final class ChordEngine {
         if heldButtons.count <= 1 {
             for btn in heldButtons {
                 guard let t = pressTimestamps[btn] else { ghosts.append(btn); continue }
-                
-                // 🛑 EXEMPT volume modifier buttons from the 3-second ghost killswitch
                 if now.timeIntervalSince(t) > maxHoldTime && !volumeScrollButtons.contains(btn) { 
                     ghosts.append(btn) 
                 }
@@ -207,6 +204,8 @@ final class ChordEngine {
     }
     
     private func synthesizeClick(btn: Int) {
+        if btn == 0 || btn == 1 { return }
+        
         guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
         let loc = CGEvent(source: nil)?.location ?? .zero
         let mappedBtn = CGMouseButton(rawValue: UInt32(btn)) ?? .center
@@ -263,7 +262,11 @@ final class ChordEngine {
         case .expose:
             runAppleScriptAsync("tell application \"System Events\" to key code 101 using {control down}")
         case .playPause:
-            sendMediaKey(keyType: 16) // NX_KEYTYPE_PLAY
+            sendMediaKey(keyType: 16) 
+        case .previousTrack:
+            sendMediaKey(keyType: 18) 
+        case .nextTrack:
+            sendMediaKey(keyType: 17) 
         case .back:
             sendKey(keyCode: 33, modifiers: .maskCommand)
         case .forward:
@@ -315,8 +318,6 @@ final class ChordEngine {
 
     private func sendMediaKey(keyType: Int) {
         let flags: UInt = 0xa00
-        
-        // Use cgSessionEventTap for macOS Media Keys (Volume, Play/Pause)
         let downData1 = (keyType << 16) | (0xa << 8)
         if let downEvent = NSEvent.otherEvent(
             with: .systemDefined, location: .zero,

@@ -17,15 +17,17 @@ if !AXIsProcessTrustedWithOptions(opts) {
     """)
 }
 
-// ── 3. Install CGEventTap — buttons only ────────────────────────────────
+// ── 3. Install CGEventTap ───────────────────────────────────────────────────
 
+// 🛑 THE FIX: Added .scrollWheel to the event mask!
 let mask: CGEventMask =
     (1 << CGEventType.leftMouseDown.rawValue)  |
     (1 << CGEventType.leftMouseUp.rawValue)    |
     (1 << CGEventType.rightMouseDown.rawValue) |
     (1 << CGEventType.rightMouseUp.rawValue)   |
     (1 << CGEventType.otherMouseDown.rawValue) |
-    (1 << CGEventType.otherMouseUp.rawValue)
+    (1 << CGEventType.otherMouseUp.rawValue)   |
+    (1 << CGEventType.scrollWheel.rawValue)
 
 let enginePtr = Unmanaged.passRetained(engine).toOpaque()
 
@@ -54,9 +56,5 @@ let runLoopSrc = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
 CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSrc, .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 
-print("[ChordDaemon] ✅  Running — listening for button chords.")
-print("[ChordDaemon]     Press Ctrl+C to stop.")
-
-// ── 4. Run ──────────────────────────────────────────────────────────────────
-
+print("[ChordDaemon] 🚀  Daemon is running and intercepting inputs (including Scroll)...")
 RunLoop.main.run()

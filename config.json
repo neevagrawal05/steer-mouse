@@ -1,6 +1,6 @@
 {
   "scroll": {
-    "reverse": true,
+    "reverse": false,
     "speed": 1.0
   },
   "chords": [
@@ -10,7 +10,7 @@
     { "buttons": [0, 2], "action": { "type": "none" } },
     { 
       "buttons": [0, 4], 
-      "action": { "type": "back" } 
+      "action": { "type": "previousTrack" } 
     },
     { "buttons": [1, 2], "action": { "type": "none" } },
     { 
@@ -23,7 +23,7 @@
     },
     { 
       "buttons": [1, 4], 
-      "action": { "type": "forward" } 
+      "action": { "type": "nextTrack" } 
     },
     { "buttons": [2, 3], "action": { "type": "none" } },
     { "buttons": [2, 4], "action": { "type": "none" } }
