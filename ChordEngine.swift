@@ -20,10 +20,13 @@ final class ChordEngine {
     private var buttonMap: [Int: ResolvedAction] = [:]
 
     private let maxHoldTime: TimeInterval = 3.0 
-    private let chordWindow: Double       = 0.020 // Restored to your original 20ms
+    private let chordWindow: Double       = 0.020 
 
     private let scrollReverse: Bool
     private let scrollSpeed: Double
+    
+    // 🎛️ Volume Modifier Buttons (Works for Button 3 and Button 4)
+    private let volumeScrollButtons: Set<Int> = [3, 4] 
 
     init(config: ChordConfig) {
         self.scrollReverse = config.scroll?.reverse ?? false
@@ -38,6 +41,7 @@ final class ChordEngine {
         }
 
         print("[ChordEngine] \(chordMap.count) chord(s), \(buttonMap.count) button(s) loaded")
+        print("[ChordEngine] Volume Scroll enabled for buttons: \(volumeScrollButtons)")
     }
 
     private func resolve(_ action: Action) -> ResolvedAction {
@@ -85,32 +89,63 @@ final class ChordEngine {
             pressTimestamps[btn] = Date()
 
             if btn == 0 || btn == 1 { return event }
+            
+            // 🛑 If this is a volume modifier, swallow the click and wait for scroll or release.
+            // Do NOT start the fast-fire timer.
+            if volumeScrollButtons.contains(btn) { return nil }
+            
             startTimer(for: btn)
             return nil
 
         } else {
             pressTimestamps.removeValue(forKey: btn)
             
-            // CRITICAL FIX: Always release the logical hold state first.
             heldButtons.remove(btn)
             cancelTimer(for: btn)
             
-            // If the timer already fired and consumed this click, suppress the release event.
             if consumedButtons.contains(btn) {
                 consumedButtons.remove(btn)
                 return nil
             }
 
-            // If the user was faster than the timer, execute the action now.
             if let action = buttonMap[btn] {
                 perform(action)
                 return nil
+            } else if volumeScrollButtons.contains(btn) {
+                // If they used the button but didn't scroll, and it has no action mapped,
+                // synthesize the native click on release so the OS doesn't lose the button.
+                synthesizeClick(btn: btn)
+                return nil
             }
+            
             return event
         }
     }
 
     private func handleScroll(_ event: CGEvent) -> CGEvent? {
+        
+        // ── 1. Volume Control via Scroll ───────────────────────────────
+        let activeVolModifiers = heldButtons.intersection(volumeScrollButtons)
+        
+        if !activeVolModifiers.isEmpty {
+            for btn in activeVolModifiers {
+                consumedButtons.insert(btn)
+                cancelTimer(for: btn)
+            }
+            
+            // Mouse wheel Y-axis delta (1 tick = 1 step)
+            let deltaY = Int(event.getIntegerValueField(.scrollWheelEventDeltaAxis1))
+            
+            if deltaY > 0 {
+                sendMediaKey(keyType: 0) // Sound Up
+            } else if deltaY < 0 {
+                sendMediaKey(keyType: 1) // Sound Down
+            }
+            
+            return nil // Consume scroll event so the browser doesn't scroll
+        }
+        // ────────────────────────────────────────────────────────────────
+
         let momentumPhase = Int(event.getIntegerValueField(.scrollWheelEventMomentumPhase))
         if momentumPhase != 0 { return event }
         
@@ -145,7 +180,11 @@ final class ChordEngine {
         if heldButtons.count <= 1 {
             for btn in heldButtons {
                 guard let t = pressTimestamps[btn] else { ghosts.append(btn); continue }
-                if now.timeIntervalSince(t) > maxHoldTime { ghosts.append(btn) }
+                
+                // 🛑 EXEMPT volume modifier buttons from the 3-second ghost killswitch
+                if now.timeIntervalSince(t) > maxHoldTime && !volumeScrollButtons.contains(btn) { 
+                    ghosts.append(btn) 
+                }
             }
         }
         
@@ -166,12 +205,24 @@ final class ChordEngine {
                           mouseButton: btn == 0 ? .left : .right)
         up?.post(tap: .cghidEventTap)
     }
+    
+    private func synthesizeClick(btn: Int) {
+        guard let src = CGEventSource(stateID: .combinedSessionState) else { return }
+        let loc = CGEvent(source: nil)?.location ?? .zero
+        let mappedBtn = CGMouseButton(rawValue: UInt32(btn)) ?? .center
+        
+        let down = CGEvent(mouseEventSource: src, mouseType: .otherMouseDown, mouseCursorPosition: loc, mouseButton: mappedBtn)
+        down?.post(tap: .cghidEventTap)
+        
+        let up = CGEvent(mouseEventSource: src, mouseType: .otherMouseUp, mouseCursorPosition: loc, mouseButton: mappedBtn)
+        up?.post(tap: .cghidEventTap)
+    }
 
     private func startTimer(for btn: Int) {
         guard buttonMap[btn] != nil else { return }
         let item = DispatchWorkItem { [weak self] in
             guard let self = self,
-                  self.heldButtons.contains(btn), // Safety guard: aborts if finger released early
+                  self.heldButtons.contains(btn), 
                   !self.consumedButtons.contains(btn),
                   let action = self.buttonMap[btn] else { return }
             self.pendingTimers.removeValue(forKey: btn)
@@ -195,6 +246,7 @@ final class ChordEngine {
     }
 
     private func isTracked(_ btn: Int) -> Bool {
+        if volumeScrollButtons.contains(btn) { return true }
         if buttonMap[btn] != nil { return true }
         let btnMask = 1 << btn
         return chordMap.keys.contains { ($0 & btnMask) != 0 }
@@ -211,7 +263,7 @@ final class ChordEngine {
         case .expose:
             runAppleScriptAsync("tell application \"System Events\" to key code 101 using {control down}")
         case .playPause:
-            sendMediaKey(keyType: 16)
+            sendMediaKey(keyType: 16) // NX_KEYTYPE_PLAY
         case .back:
             sendKey(keyCode: 33, modifiers: .maskCommand)
         case .forward:
@@ -262,25 +314,27 @@ final class ChordEngine {
     }
 
     private func sendMediaKey(keyType: Int) {
-        let flags = 0xa00
+        let flags: UInt = 0xa00
+        
+        // Use cgSessionEventTap for macOS Media Keys (Volume, Play/Pause)
         let downData1 = (keyType << 16) | (0xa << 8)
-        let downEvent = NSEvent.otherEvent(
+        if let downEvent = NSEvent.otherEvent(
             with: .systemDefined, location: .zero,
-            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
+            modifierFlags: NSEvent.ModifierFlags(rawValue: flags),
             timestamp: 0, windowNumber: 0, context: nil,
             subtype: 8, data1: downData1, data2: -1
-        )
-        downEvent?.cgEvent?.post(tap: .cgSessionEventTap)
+        )?.cgEvent {
+            downEvent.post(tap: .cgSessionEventTap)
+        }
         
         let upData1 = (keyType << 16) | (0xb << 8)
-        let upEvent = NSEvent.otherEvent(
+        if let upEvent = NSEvent.otherEvent(
             with: .systemDefined, location: .zero,
-            modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(flags)),
+            modifierFlags: NSEvent.ModifierFlags(rawValue: flags),
             timestamp: 0, windowNumber: 0, context: nil,
             subtype: 8, data1: upData1, data2: -1
-        )
-        DispatchQueue.main.async {
-            upEvent?.cgEvent?.post(tap: .cgSessionEventTap)
+        )?.cgEvent {
+            upEvent.post(tap: .cgSessionEventTap)
         }
     }
 
